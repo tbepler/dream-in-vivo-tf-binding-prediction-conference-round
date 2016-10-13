@@ -1,0 +1,34 @@
+#!/usr/bin/env python
+
+"""
+This scripts takes separate input files:
+    - FASTA formatted sequence
+    - BigWig tracks
+and outputs a single, combined data file appropriate for downstream use
+"""
+
+import argparse
+import sys
+import os
+sys.path.append('/'.join(os.path.dirname(os.path.abspath(__file__)).split('/')[:-2]))
+
+import src.data as data
+import src.parser as parse
+from src.preprocess.features import combine_tracks
+
+genome_path = 'data/raw/annotations/hg19.genome.fa.gz'
+
+def argument_parser():
+    parser = argparse.ArgumentParser(description='This script combines genome, DNAse, and gene expression data files into one table suitable for downstream use.')
+    parser.add_argument('-g', '--genome', metavar='FILE', default=genome_path, help='genome file path (default: {})'.format(genome_path))
+    parser.add_argument('-t', '--tracks', metavar='FILE', nargs='*', help='BigWig feature tracks')
+    parser.add_argument('-o', '--output', metavar='FILE', default=None, help='Destination file (default: stdout)')
+    return parser
+
+def main():
+    args = argument_parser().parse_args()
+    combine_tracks(args.genome, args.tracks, args.output)
+
+main()
+
+

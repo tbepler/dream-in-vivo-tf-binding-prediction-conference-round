@@ -1,0 +1,69 @@
+#!/usr/bin/env python
+
+"""
+This script takes labeled regions and partitions them into training and held out testing regions.
+"""
+
+from __future__ import print_function
+
+import sys
+import os
+import argparse
+import gzip
+#import cPickle as pickle
+import pickle
+import random
+import pandas as pd
+
+sys.path.append('/'.join(os.path.dirname(os.path.abspath(__file__)).split('/')[:-2]))
+
+import src.data as data
+import src.parser as parse
+
+def argument_parser():
+    parser = argparse.ArgumentParser(description='This script takes labeled regions and partitions them into training and held out testing regions.')
+    parser.add_argument('path', metavar='FILE', help='region label file to process')
+    parser.add_argument('--train', metavar='FILE', help='output for the training data')
+    parser.add_argument('--held-out', dest='held_out', metavar='FILE', help='output for the held out data')
+    return parser
+
+def main():
+    args = argument_parser().parse_args()
+    with gzip.open(args.path) as f:
+        df = pickle.load(f)
+    cell_lines = list(set(df['Cell Line']))
+    I = None
+    if len(cell_lines) >= 4:
+        cell_line = random.choice(cell_lines)
+        print('Holding out:', cell_line, file=sys.stderr)
+        I = df['Cell Line'] == cell_line
+    chrom = 'chr7'
+    print('Holding out:', chrom, file=sys.stderr)
+    if I is not None:
+        I = I | (df['Chrom'] == chrom)
+    else:
+        I = df['Chrom'] == chrom
+    chrom = 'chr14'
+    print('Holding out:', chrom, file=sys.stderr)
+    I = I | (df['Chrom'] == chrom)
+    held_out = df.loc[I]
+    training = df.loc[~I]
+    n = sum(len(x) for x in held_out['Label'])
+    print('Number held out labels:', n, file=sys.stderr)
+    n = sum(len(x) for x in training['Label'])
+    print('Number training labels:', n, file=sys.stderr)
+    with gzip.open(args.train, 'wb') as f:
+        pickle.dump(training, f, protocol=pickle.HIGHEST_PROTOCOL)
+    with gzip.open(args.held_out, 'wb') as f:
+        pickle.dump(held_out, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+main()
+
+
+
+
+
+
+
+
+

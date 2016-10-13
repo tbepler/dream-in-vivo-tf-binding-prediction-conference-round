@@ -1,0 +1,3 @@
+[submodule "rnn"]
+	path = rnn
+	url = https://github.com/tbepler/rnn.git

@@ -1,0 +1,43 @@
+#!/usr/bin/env python
+
+from __future__ import print_function
+
+import sys
+import os
+import argparse
+import pandas as pd
+
+root_split = os.path.dirname(os.path.abspath(__file__)).split('/')[:-2]
+sys.path.append('/'.join(root_split))
+sys.path.append('/'.join(root_split+['rnn']))
+
+def argument_parser():
+    parser = argparse.ArgumentParser(description='This script takes gene expression data and averages the signals together')
+    parser.add_argument('files', metavar='FILE', nargs='*', help='Gene expression file paths')
+    parser.add_argument('-o', '--output', metavar='FILE', default=None, help='Destination file (default: stdout)')
+    return parser
+
+def main():
+    args = argument_parser().parse_args()
+    dfs = []
+    for path in args.files:
+        cell_line = os.path.basename(path).split('.')[1]
+        df = pd.read_csv(path, sep='\t', header=None, names=['ID', cell_line], index_col=0)
+        dfs.append(df)
+    index = set()
+    columns = set()
+    for df in dfs:
+        index.update(df.index.tolist())
+        columns.update(df.columns.tolist())
+    index = sorted(list(index))
+    columns = sorted(list(columns))
+    df = pd.DataFrame(index=index, columns=columns)
+    for df_ in dfs:
+        df.update(df_)
+    out = sys.stdout if args.output is None else open(args.output, 'w')
+    df.to_csv(out, sep='\t')
+    #print(df.shape)
+
+main()
+
+

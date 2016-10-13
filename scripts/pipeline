@@ -1,0 +1,231 @@
+#!/usr/bin/make -f
+
+SHELL = /bin/bash -o pipefail
+
+bsub = False
+env = cpu
+device = $(env)
+threads = 12
+THEANO_COMPDIR:=/tmp/tb122/.theano
+CPU_THEANO_FLAGS:='floatX=float32,device=$(device),scan.allow_gc=False,base_compiledir=$(THEANO_COMPDIR)'
+GPU_THEANO_FLAGS:='floatX=float32,device=$(device),lib.cnmem=1,base_compiledir=$(THEANO_COMPDIR)'
+#,profile=True,profile_memory=True
+ACTIVATE_PYTHON_ENV:=source activate onlydreams
+
+CELL_LINES:=A549 HepG2 MCF-7 GM12878 IMR90 Panc1 H1-hESC induced_pluripotent_stem_cell PC-3 HCT116 K562 SK-N-SH HeLa-S3 liver
+TFS:=ARID3A E2F6 JUND SRF ATF2 EGR1 MAFK STAT3 ATF3 EP300 MAX TAF1 ATF7 FOXA1 MYC TCF12 CEBPB FOXA2 NANOG TCF7L2 CREB1 GABPA REST TEAD4 CTCF GATA3 RFX5 YY1 E2F1 HNF4A SPI1 ZNF143
+
+DNASE_DIR := data/raw/DNASE/fold_coverage_wiggles
+RNA_SEQ_DIR := data/raw/RNAseq
+LABELS_DIR := data/raw/ChIPseq/labels
+
+MODEL_NAME := $(basename $(notdir $(model)))
+FIT_DATA := $(basename $(basename $(notdir $(data))))
+
+LABELS_D01:=train.train.split2000.pad400.labels.pi.gz
+TRACKS_D01:=$(patsubst %,data/processed/features/hg19.DNAse.NearestGene5p.%.combined.features.h5,$(CELL_LINES))
+FIXED_D01:=data/processed/features/MeanTPM.combined.TF.cofactor.txt
+
+LABELS_D02:=train.train.split2000.pad400.balanced.labels.pi.gz
+TRACKS_D02:=$(patsubst %,data/processed/features/hg19.DNAse.NearestGene5p.%.combined.features.h5,$(CELL_LINES))
+FIXED_D02:=data/processed/features/MeanTPM.combined.TF.cofactor.txt
+
+LABELS_D03:=train.train.split2000.pad400.labels.pi.gz
+TRACKS_D03:=$(patsubst %,data/processed/features/hg19.DNAse.NearestGene5p.%.combined.features.h5,$(CELL_LINES))
+FIXED_D03:=data/processed/features/MeanTPM.combined.TF.cofactor.txt
+
+.PHONY : fit summary preprocess merge_labels partition_labels split_and_pad_labels nearest_gene_5p_tracks combine_features mean_tpm
+.PRECIOUS : models/batch/%.$(MODEL_NAME).$(env).$(device).$(threads).fit.sh models/batch/%.D01.$(MODEL_NAME).$(env).$(device).$(threads).fit.sh models/batch/%.D02.$(MODEL_NAME).$(env).$(device).$(threads).fit.sh models/batch/%.D03.$(MODEL_NAME).$(env).$(device).$(threads).fit.sh models/batch/$(MODEL_NAME).%.D01.$(env).$(device).$(threads).sampled.summary.sh models/batch/$(MODEL_NAME).ARID3A.D01.$(env).$(device).$(threads).summary.sh models/batch/$(MODEL_NAME).ARID3A.D01.$(env).$(device).$(threads).sampled.summary.sh
+
+fit : models/trained/$(data).$(MODEL_NAME).pi
+
+models/batch/%.D01.$(MODEL_NAME).$(env).$(device).$(threads).fit.sh : data/processed/labels/%.$(LABELS_D01) $(TRACKS_D01) $(FIXED_D01) scripts/pipeline
+	@mkdir -p $(@D)
+	@echo "#!/bin/bash" > $@
+	@echo "export OMP_NUM_THREADS=$(threads)" >> $@
+	@echo "export PATH=\$$HOME/.local/bin:\$$PATH" >> $@
+ifeq ($(env), cpu)
+	@echo "export THEANO_FLAGS=$(CPU_THEANO_FLAGS)" >> $@
+else
+	@echo "export THEANO_FLAGS=$(GPU_THEANO_FLAGS)" >> $@
+endif
+	@echo "$(ACTIVATE_PYTHON_ENV)" >> $@
+ifeq ($(device), gpu)
+	@echo "GPU=\"\$$(scripts/get_unused_gpu)\"" >> $@
+	@echo "export CUDA_VISIBLE_DEVICES=\$$GPU" >> $@
+endif
+	@echo "scripts/model/fit -m $(model) -y $< --tracks $(TRACKS_D01) --fixed=$(FIXED_D01) -o models/trained/$(patsubst %.$(env).$(device).$(threads).fit.sh,%.pi,$(@F)) --snapshot-prefix=models/trained/snapshots/$(patsubst %.$(env).$(device).$(threads).fit.sh,%,$(@F))  > models/trained/$(patsubst %.$(env).$(device).$(threads).fit.sh,%.fit.out,$(@F)) 2>&1" >> $@
+	@chmod u+x $@
+
+models/batch/%.D02.$(MODEL_NAME).$(env).$(device).$(threads).fit.sh : data/processed/labels/%.$(LABELS_D02) $(TRACKS_D02) $(FIXED_D02) scripts/pipeline
+	@mkdir -p $(@D)
+	@echo "#!/bin/bash" > $@
+	@echo "export OMP_NUM_THREADS=$(threads)" >> $@
+	@echo "export PATH=\$$HOME/.local/bin:\$$PATH" >> $@
+ifeq ($(env), cpu)
+	@echo "export THEANO_FLAGS=$(CPU_THEANO_FLAGS)" >> $@
+else
+	@echo "export THEANO_FLAGS=$(GPU_THEANO_FLAGS)" >> $@
+endif
+	@echo "$(ACTIVATE_PYTHON_ENV)" >> $@
+ifeq ($(device), gpu)
+	@echo "GPU=\"\$$(scripts/get_unused_gpu)\"" >> $@
+	@echo "export CUDA_VISIBLE_DEVICES=\$$GPU" >> $@
+endif
+	@echo "scripts/model/fit -m $(model) -y $< --tracks $(TRACKS_D02) --fixed=$(FIXED_D02) -o models/trained/$(patsubst %.$(env).$(device).$(threads).fit.sh,%.pi,$(@F)) --snapshot-prefix=models/trained/snapshots/$(patsubst %.$(env).$(device).$(threads).fit.sh,%,$(@F))  > models/trained/$(patsubst %.$(env).$(device).$(threads).fit.sh,%.fit.out,$(@F)) 2>&1" >> $@
+	@chmod u+x $@
+
+models/batch/%.D03.$(MODEL_NAME).$(env).$(device).$(threads).fit.sh : data/processed/labels/%.$(LABELS_D03) $(TRACKS_D03) $(FIXED_D03) scripts/pipeline
+	@mkdir -p $(@D)
+	@echo "#!/bin/bash" > $@
+	@echo "export OMP_NUM_THREADS=$(threads)" >> $@
+	@echo "export PATH=\$$HOME/.local/bin:\$$PATH" >> $@
+ifeq ($(env), cpu)
+	@echo "export THEANO_FLAGS=$(CPU_THEANO_FLAGS)" >> $@
+else
+	@echo "export THEANO_FLAGS=$(GPU_THEANO_FLAGS)" >> $@
+endif
+	@echo "$(ACTIVATE_PYTHON_ENV)" >> $@
+ifeq ($(device), gpu)
+	@echo "GPU=\"\$$(scripts/get_unused_gpu)\"" >> $@
+	@echo "export CUDA_VISIBLE_DEVICES=\$$GPU" >> $@
+endif
+	@echo "scripts/model/fit --rebalance=0.25 -m $(model) -y $< --tracks $(TRACKS_D02) --fixed=$(FIXED_D02) -o models/trained/$(patsubst %.$(env).$(device).$(threads).fit.sh,%.pi,$(@F)) --snapshot-prefix=models/trained/snapshots/$(patsubst %.$(env).$(device).$(threads).fit.sh,%,$(@F))  > models/trained/$(patsubst %.$(env).$(device).$(threads).fit.sh,%.fit.out,$(@F)) 2>&1" >> $@
+	@chmod u+x $@
+
+models/trained/%.$(MODEL_NAME).pi : models/batch/%.$(MODEL_NAME).$(env).$(device).$(threads).fit.sh $(model)
+	@mkdir -p $(@D)
+	$(eval CMD=models/batch/$(patsubst %.pi,%.$(env).$(device).$(threads).fit.sh,$(@F)))	
+ifeq ($(bsub), True)
+	$(eval LOG=models/logs/$(patsubst %.pi,%.fit,$(@F)))
+ifeq ($(env), cpu)
+	bsub -q priority -W 168:00 -n $(threads) -R rusage[mem=2000] -e $(LOG).err -o $(LOG).out -J $(patsubst %.pi,%.fit,$(@F)) $(CMD)
+else
+		bsub -q gpu -m contrabassoon001-124 -W 168:00 -R rusage[mem=24000,ngpus=1] -e $(LOG).err -o $(LOG).out -J $(patsubst %.pi,%.fit,$(@F)) $(CMD)
+endif
+else
+	$(CMD)
+endif
+
+summary : models/trained/$(MODEL_NAME).$(data).summary.txt
+
+models/batch/$(MODEL_NAME).ARID3A.D01.$(env).$(device).$(threads).summary.sh : data/processed/labels/ARID3A.$(LABELS_D01) data/processed/features/hg19.DNAse.NearestGene5p.HepG2.combined.features.h5 $(FIXED_D01) scripts/pipeline
+	@mkdir -p $(@D)
+	@echo "#!/bin/bash" > $@
+	@echo "export OMP_NUM_THREADS=$(threads)" >> $@
+	@echo "export PATH=\$$HOME/.local/bin:\$$PATH" >> $@
+ifeq ($(env), cpu)
+	@echo "export THEANO_FLAGS=$(CPU_THEANO_FLAGS)" >> $@
+else
+	@echo "export THEANO_FLAGS=$(GPU_THEANO_FLAGS)" >> $@
+endif
+	@echo "$(ACTIVATE_PYTHON_ENV)" >> $@
+ifeq ($(device), gpu)
+	@echo "GPU=\"\$$(scripts/get_unused_gpu)\"" >> $@
+	@echo "export CUDA_VISIBLE_DEVICES=\$$GPU" >> $@
+endif
+	@echo "scripts/model/summary -m $(model) -y $< --tracks data/processed/features/hg19.DNAse.NearestGene5p.HepG2.combined.features.h5 --fixed=$(FIXED_D01) > models/trained/$(patsubst %.$(env).$(device).$(threads).summary.sh,%.summary.txt,$(@F)) 2>&1" >> $@
+	@chmod u+x $@
+
+models/trained/$(MODEL_NAME).%.summary.txt : models/batch/$(MODEL_NAME).%.$(env).$(device).$(threads).summary.sh
+	@mkdir -p $(@D)
+	#$(eval CMD=models/batch/$(patsubst %.txt,%.$(env).$(device).$(threads).sh,$(@F)))	
+	$(eval CMD=$<)	
+ifeq ($(bsub), True)
+	$(eval LOG=models/logs/$(patsubst %.txt,%,$(@F)))
+ifeq ($(env), cpu)
+	bsub -q mcore -W 168:00 -n $(threads) -R rusage[mem=2000] -e $(LOG).err -o $(LOG).out -J $(patsubst %.txt,%,$(@F)) $(CMD)
+else
+	bsub -q gpu -m contrabassoon001-124 -W 168:00 -R rusage[mem=24000,ngpus=1] -e $(LOG).err -o $(LOG).out -J $(patsubst %.txt,%,$(@F)) $(CMD)
+endif
+else
+	$(CMD)
+endif
+
+summary_sampled : models/trained/$(MODEL_NAME).$(data).sampled.summary.txt
+
+models/batch/$(MODEL_NAME).ARID3A.D01.$(env).$(device).$(threads).sampled.summary.sh : data/processed/labels/ARID3A.$(LABELS_D01) data/processed/features/hg19.DNAse.NearestGene5p.HepG2.combined.features.h5 $(FIXED_D01) scripts/pipeline
+	@mkdir -p $(@D)
+	@echo "#!/bin/bash" > $@
+	@echo "export OMP_NUM_THREADS=$(threads)" >> $@
+	@echo "export PATH=\$$HOME/.local/bin:\$$PATH" >> $@
+ifeq ($(env), cpu)
+	@echo "export THEANO_FLAGS=$(CPU_THEANO_FLAGS)" >> $@
+else
+	@echo "export THEANO_FLAGS=$(GPU_THEANO_FLAGS)" >> $@
+endif
+	@echo "$(ACTIVATE_PYTHON_ENV)" >> $@
+ifeq ($(device), gpu)
+	@echo "GPU=\"\$$(scripts/get_unused_gpu)\"" >> $@
+	@echo "export CUDA_VISIBLE_DEVICES=\$$GPU" >> $@
+endif
+	@echo "scripts/model/summary -m $(model) -y $< --tracks data/processed/features/hg19.DNAse.NearestGene5p.HepG2.combined.features.h5 --fixed=$(FIXED_D01) --downsample > models/trained/$(patsubst %.$(env).$(device).$(threads).sampled.summary.sh,%.sampled.summary.txt,$(@F)) 2>&1" >> $@
+	@chmod u+x $@
+
+models/trained/$(MODEL_NAME).%.sampled.summary.txt : models/batch/$(MODEL_NAME).%.$(env).$(device).$(threads).sampled.summary.sh
+	@mkdir -p $(@D)
+	#$(eval CMD=models/batch/$(patsubst %.txt,%.$(env).$(device).$(threads).sh,$(@F)))	
+	$(eval CMD=$<)	
+ifeq ($(bsub), True)
+	$(eval LOG=models/logs/$(patsubst %.txt,%,$(@F)))
+ifeq ($(env), cpu)
+	bsub -q mcore -W 168:00 -n $(threads) -R rusage[mem=2000] -e $(LOG).err -o $(LOG).out -J $(patsubst %.txt,%,$(@F)) $(CMD)
+else
+	bsub -q gpu -m contrabassoon001-124 -W 168:00 -R rusage[mem=24000,ngpus=1] -e $(LOG).err -o $(LOG).out -J $(patsubst %.txt,%,$(@F)) $(CMD)
+endif
+else
+	$(CMD)
+endif
+
+preprocess : merge_labels partition_labels split_and_pad_labels nearest_gene_5p_tracks combine_features mean_tpm
+
+combine_features : $(patsubst %,data/processed/features/hg19.DNAse.NearestGene5p.%.combined.features.h5,$(CELL_LINES)) data/processed/features/MeanTPM.combined.TF.cofactor.txt
+
+data/processed/features/hg19.DNAse.NearestGene5p.%.combined.features.h5 : $(DNASE_DIR)/DNASE.%.fc.signal.bigwig data/processed/RNAseq/NearestGene5p.%.bed.gz
+	@mkdir -p $(@D)
+	$(ACTIVATE_PYTHON_ENV) && scripts/preprocess/combine_features -o $@ --tracks $^
+
+data/processed/features/MeanTPM.combined.TF.cofactor.txt : $(patsubst %,data/processed/RNAseq/MeanTPM.%.TF.txt,$(CELL_LINES)) $(patsubst %,data/processed/RNAseq/MeanTPM.%.cofactor.txt,$(CELL_LINES))
+	@mkdir -p $(@D)
+	$(ACTIVATE_PYTHON_ENV) && scripts/preprocess/join_fixed_features $^ -o $@
+
+mean_tpm : $(patsubst %,data/processed/RNAseq/MeanTPM.%.txt,$(CELL_LINES)) $(patsubst %,data/processed/RNAseq/MeanTPM.%.TF.txt,$(CELL_LINES)) $(patsubst %,data/processed/RNAseq/MeanTPM.%.cofactor.txt,$(CELL_LINES))
+
+data/processed/RNAseq/MeanTPM.%.txt : data/raw/RNAseq/gene_expression.%.biorep1.tsv data/raw/RNAseq/gene_expression.%.biorep2.tsv
+	@mkdir -p $(@D)
+	$(ACTIVATE_PYTHON_ENV) && scripts/preprocess/mean_gene_expression $^ -o $@
+
+data/processed/RNAseq/MeanTPM.%.TF.txt : data/processed/RNAseq/MeanTPM.%.txt data/raw/annotations/Homo_sapiens_TF_EnsemblID.txt
+	grep -Ff data/raw/annotations/Homo_sapiens_TF_EnsemblID.txt $< > $@
+
+data/processed/RNAseq/MeanTPM.%.cofactor.txt : data/processed/RNAseq/MeanTPM.%.txt data/raw/annotations/Homo_sapiens_cofactor_EnsemblID.txt
+	grep -Ff data/raw/annotations/Homo_sapiens_cofactor_EnsemblID.txt $< > $@
+
+nearest_gene_5p_tracks : $(patsubst %,data/processed/RNAseq/NearestGene5p.%.bed.gz,$(CELL_LINES))
+
+data/processed/RNAseq/NearestGene5p.%.bed.gz : data/raw/RNAseq/gene_expression.%.biorep1.tsv data/raw/RNAseq/gene_expression.%.biorep2.tsv
+	@mkdir -p $(@D)
+	$(ACTIVATE_PYTHON_ENV) && scripts/preprocess/nearest_gene_5p_track -r $^ | gzip > $@
+
+merge_labels : $(patsubst %, data/processed/labels/%.train.all.merged.labels.pi.gz, $(TFS))
+
+data/processed/labels/%.all.merged.labels.pi.gz : $(LABELS_DIR)/%.labels.tsv.gz
+	@mkdir -p $(@D)
+	$(ACTIVATE_PYTHON_ENV) && scripts/preprocess/merge_labels $< | gzip > $@
+
+partition_labels : $(patsubst %, data/processed/labels/%.train.train.merged.labels.pi.gz, $(TFS)) $(patsubst %, data/processed/labels/%.train.heldout.merged.labels.pi.gz, $(TFS))
+
+%.heldout.merged.labels.pi.gz : %.all.merged.labels.pi.gz
+	$(ACTIVATE_PYTHON_ENV) && scripts/preprocess/partition_labels --held-out $@ --train $(patsubst %.heldout.merged.labels.pi.gz, %.train.merged.labels.pi.gz, $@) $<
+
+%.train.merged.labels.pi.gz : %.heldout.merged.labels.pi.gz ;
+
+split_and_pad_labels : $(patsubst %, data/processed/labels/%.train.train.split$(split_n).pad$(pad_n).labels.pi.gz, $(TFS))
+
+%.split$(split_n).pad$(pad_n).labels.pi.gz : %.merged.labels.pi.gz
+	$(ACTIVATE_PYTHON_ENV) && scripts/preprocess/split_and_pad_labels -n $(split_n) -p $(pad_n) $< | gzip > $@
+
+%.balanced.labels.pi.gz : %.labels.pi.gz
+	$(ACTIVATE_PYTHON_ENV) && scripts/preprocess/downsample -b $< | gzip > $@
+
+

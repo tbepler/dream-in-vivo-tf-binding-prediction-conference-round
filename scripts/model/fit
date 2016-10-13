@@ -1,0 +1,187 @@
+#!/usr/bin/env python
+
+"""
+This script takes a model file and training data and fits the model 
+"""
+
+from __future__ import print_function
+
+import sys
+import os
+import argparse
+import gzip
+#import cPickle as pickle
+import pickle
+import itertools
+import pandas as pd
+import numpy as np
+import six
+import random
+
+root_split = os.path.dirname(os.path.abspath(__file__)).split('/')[:-2]
+sys.path.append('/'.join(root_split))
+sys.path.append('/'.join(root_split+['rnn']))
+
+import src.data as data
+import src.parser as parse
+import src.loader as loader
+from src.progress import Progress
+import src.model
+
+genome_path = 'data/raw/annotations/hg19.genome.fa.gz'
+gene_annotations_path = 'data/raw/annotations/gencode.v19.annotation.gff3.gz'
+
+#trace_file = gzip.open('models/debug/fit.{}.trace.gz'.format(os.getpid()), 'wb')
+#def trace(frame, event, arg):
+#    s = "[{}] {}, {}:{}\n".format(os.getpid(), event, frame.f_code.co_filename, frame.f_lineno).encode('utf-8')
+#    trace_file.write(s)
+    #print(s, file=trace_file)
+#    return trace
+#sys.settrace(trace)
+
+def argument_parser():
+    parser = argparse.ArgumentParser(description='This script takes a model file and training data and fits the model.')
+    parser.add_argument('-m', '--model', metavar='FILE', help='model file')
+    parser.add_argument('-y', '--labels', metavar='FILE', help='labeled regions file')
+    parser.add_argument('-g', '--genome', metavar='FILE', default=genome_path, help='genome file path (default: {})'.format(genome_path))
+    parser.add_argument('-d', '--dnase', metavar='FILE', nargs='*', help='DNAse file paths')
+    parser.add_argument('-r', '--rna-seq', dest='rna_seq', metavar='FILE', nargs='*', help='Gene expression file paths')
+    parser.add_argument('-f', '--fixed', metavar='FILE', help='File containing fixed length features')
+    parser.add_argument('-t', '--tracks', metavar='FILE', nargs='*', help='Full feature track files')
+    parser.add_argument('--rebalance', metavar='P', default=None, type=float, help='Proportion positive labels to rebalance to')
+    parser.add_argument('--gene-annot', dest='gene_annot', metavar='FILE', default=gene_annotations_path, help='Gene annotations file (default: {}'.format(gene_annotations_path))
+    parser.add_argument('-v', '--validation', metavar='REAL', default=0.01, help='Real number between 0 and 1. Fraction of data to hold out for validation. (default: 0.01)')
+    parser.add_argument('--random-seed', dest='random_seed', metavar='INT', default=None, help='Random seed for initializing the RNG (default: None)')
+    parser.add_argument('--snapshot-prefix', dest='snapshot_prefix', default=None, help='Path prefix to which model snapshots will be written (default: models/trained/snapshots/LABELS.MODEL)')
+    parser.add_argument('-o', '--output', metavar='FILE', default=None, help='Destination file (default: stdout)')
+    return parser
+
+def find_file(paths, cell_line):
+    for path in paths:
+        if cell_line in path:
+            return path
+
+def find_files(paths, cell_line):
+    return [path for path in paths if cell_line in path]
+
+def read_gene_expression(path):
+    with open(path) as f:
+        for x in parse.read_gene_expression(f):
+            yield x
+
+def load_gene_expression_cell_lines(paths, cell_lines):
+    for cell_line in cell_lines:
+        print('# Loading', cell_line, 'gene expression', file=sys.stderr)
+        expr = [read_gene_expression(path) for path in find_files(paths, cell_line)]
+        expr = data.combine_gene_expression(itertools.chain(*expr))
+        yield cell_line, six.iteritems(expr)
+
+def get_regions(labels_df):
+    regions = []
+    for row in labels_df.itertuples():
+        regions.append(tuple(row[1:]))
+    return regions
+
+def open_fixed(fixed):
+    print('# Opening fixed features:', fixed, file=sys.stderr)
+    F = pd.read_csv(fixed, sep='\t', index_col=0)
+    F = F.astype(np.float32)
+    return F
+
+def open_features(regions, tracks, fixed, **kwargs):
+    from src.prefetcher import Prefetcher
+    it = loader.RegionsIterator(tracks, fixed, regions, **kwargs)    
+    #return it
+    return Prefetcher(it, 2048, thread=False)
+
+def open_training_features(regions, tracks, fixed, p):
+    cell_lines = set(next(zip(*regions)))
+    tracks = {cell_line: find_file(tracks, cell_line) for cell_line in cell_lines}
+    print('# Using training tracks:', list(tracks.values()), file=sys.stderr)
+    if p is not None:
+        p = [1-p, p]
+    return open_features(regions, tracks, fixed, infinite=True, randomize=True, weights=p)
+
+def open_validation_features(regions, tracks, fixed, p):
+    cell_lines = set(next(zip(*regions)))
+    tracks = {cell_line: find_file(tracks, cell_line) for cell_line in cell_lines}
+    print('# Using validation tracks:', list(tracks.values()), file=sys.stderr)
+    if p is not None:
+        p = [1-p, p]
+    return open_features(regions, tracks, fixed, weights=p)
+
+def main():
+    args = argument_parser().parse_args()
+    random.seed(args.random_seed)
+    np.random.seed(args.random_seed)
+
+    #load the model
+    print('# Loading model:', args.model, file=sys.stderr)
+    model = src.model.load(args.model)
+    sys.stderr.flush()
+
+    #load the regions
+    print('# Loading data', file=sys.stderr)
+    with gzip.open(args.labels) as f:
+        labels_df = pickle.load(f)
+    print('# Number of regions:', len(labels_df), file=sys.stderr)
+    sys.stderr.flush()
+    cell_lines = set(labels_df['Cell Line'])
+    regions = get_regions(labels_df)
+
+    #split data into training and validation
+    n = int(len(regions)*args.validation)
+    if n > 0:
+        random.shuffle(regions)
+        validation = regions[:n]
+        training = regions[n:]
+    else:
+        validation = None
+        training = regions
+    print('# Number of training examples:', len(training), file=sys.stderr)
+    print('# Number of validation examples:', n, file=sys.stderr)
+    sys.stderr.flush()
+
+    if args.rebalance is not None:
+        print('# Rebalancing positive proportion:', args.rebalance, file=sys.stderr)
+
+    #make the data loaders
+    fixed = open_fixed(args.fixed)
+    training = open_training_features(training, args.tracks, fixed, args.rebalance)
+    if validation is not None:
+        validation = open_validation_features(validation, args.tracks, fixed, args.rebalance)
+
+    #fit the model
+    if args.snapshot_prefix is None:
+        tf = os.path.basename(args.labels).split('.')[0]
+        model_name = os.path.splitext(os.path.basename(args.model))[0]
+        labels_name = '.'.join(os.path.basename(args.labels).split('.')[:-2])
+        args.snapshot_prefix = os.path.join('models', 'trained', 'snapshots', '.'.join([labels_name, model_name]))
+    if not os.path.exists(os.path.dirname(args.snapshot_prefix)):
+        os.makedirs(os.path.dirname(args.snapshot_prefix))
+    print('# Model snapshot prefix:', args.snapshot_prefix, file=sys.stderr)
+    sys.stderr.flush()
+    progress = Progress(out=sys.stderr)
+    reports = model.fit(training, validate=validation
+                       , callback=progress.progress_monitor()
+                       , snapshot_prefix=args.snapshot_prefix)
+    first = True
+    for df in  reports:
+        df.to_csv(progress, sep='\t', float_format='%.5f', header=first, index=False)
+        first = False
+
+    #write the final model
+    out = sys.stdout.buffer if args.output is None else open(args.output, 'wb')
+    pickle.dump(model, out, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+main()
+
+
+
+
+
+
+
+
+

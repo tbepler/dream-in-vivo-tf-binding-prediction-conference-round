@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+cd data/raw/annotations
+wget --timestamping 'ftp://ftp.sanger.ac.uk/pub/gencode/Gencode_human/release_19/gencode.v19.annotation.gff3.gz'
+wget --timestamping 'http://hgdownload.cse.ucsc.edu/goldenPath/hg19/database/ensGene.txt.gz'

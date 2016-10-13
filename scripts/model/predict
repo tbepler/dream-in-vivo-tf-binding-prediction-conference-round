@@ -1,0 +1,154 @@
+#!/usr/bin/env python
+
+"""
+This script takes a model file, data, and regions and gives the model's predictions for that data
+"""
+
+from __future__ import print_function
+
+import sys
+import os
+import argparse
+import gzip
+#import cPickle as pickle
+import pickle
+import itertools
+import pandas as pd
+import numpy as np
+import six
+import random
+
+root_split = os.path.dirname(os.path.abspath(__file__)).split('/')[:-2]
+sys.path.append('/'.join(root_split))
+sys.path.append('/'.join(root_split+['rnn']))
+
+import src.data as data
+import src.parser as parse
+import src.loader as loader
+from src.progress import Progress
+import src.model
+
+genome_path = 'data/raw/annotations/hg19.genome.fa.gz'
+gene_annotations_path = 'data/raw/annotations/gencode.v19.annotation.gff3.gz'
+
+def argument_parser():
+    parser = argparse.ArgumentParser(description='This script takes a model file, data, and regions and gives the model\'s predictions for that data.')
+    parser.add_argument('-m', '--model', metavar='FILE', help='model file')
+    parser.add_argument('-x', '--regions', metavar='FILE', help='regions file (default: whole genome)')
+    parser.add_argument('-g', '--genome', metavar='FILE', default=genome_path, help='genome file path (default: {})'.format(genome_path))
+    parser.add_argument('-d', '--dnase', metavar='FILE', nargs='*', help='DNAse file paths')
+    parser.add_argument('-r', '--rna-seq', dest='rna_seq', metavar='FILE', nargs='*', help='Gene expression file paths')
+    parser.add_argument('--gene-annot', dest='gene_annot', metavar='FILE', default=gene_annotations_path, help='Gene annotations file (default: {}'.format(gene_annotations_path))
+    parser.add_argument('-o', '--output', metavar='FILE', default=None, help='Destination file (default: stdout)')
+    return parser
+
+def find_file(paths, cell_line):
+    for path in paths:
+        if cell_line in path:
+            return path
+
+def find_files(paths, cell_line):
+    return [path for path in paths if cell_line in path]
+
+def read_gene_expression(path):
+    with open(path) as f:
+        for x in parse.read_gene_expression(f):
+            yield x
+
+def load_gene_expression_cell_lines(paths, cell_lines):
+    for cell_line in cell_lines:
+        print('# Loading', cell_line, 'gene expression', file=sys.stderr)
+        expr = [read_gene_expression(path) for path in find_files(paths, cell_line)]
+        expr = data.combine_gene_expression(itertools.chain(*expr))
+        yield cell_line, six.iteritems(expr)
+
+def open_features(cell_lines, genome, dnase, rna_seq, gene_annot):
+    dnase_paths = {cell_line: find_file(dnase, cell_line) for cell_line in cell_lines}
+    with gzip.open(genome) as gf: 
+        genome_fasta = parse.read_fasta(gf)
+        gene_expr = load_gene_expression_cell_lines(rna_seq, cell_lines)
+        with gzip.open(gene_annot) as gaf:
+            gene_annotations = parse.read_gene_annotations(gaf)
+            features = loader.features(genome_fasta, dnase_paths, gene_expr, gene_annotations)
+    return features
+
+def get_regions(labels_df):
+    regions = []
+    for _,cell_line,chrom,start,end,_,_ in labels_df.itertuples():
+        regions.append((cell_line,chrom,start,end))
+    return regions
+
+def get_cell_lines(paths):
+    cell_lines = [os.path.basename(path).split('.')[1] for path in paths]
+    return set(cell_lines)
+
+def default_regions(chroms, cell_lines):
+    regions = []
+    for cell_line in cell_lines:
+        for chrom, dna in six.iteritems(chroms):
+            n = len(dna)
+            #split the chromosom into chunks of length 1mil for processing
+            chunk = 1000000
+            for i in range(0, n, chunk):
+                end = min(n, i+chunk)
+                regions.append((cell_line, chrom, i, end))
+    return regions
+
+def predict(model, features, regions, chunk=10):
+    for i in range(0, len(regions), chunk):
+        R = regions[i:i+chunk]
+        X = features.select(R)
+        Y_p = model.predict_proba()
+        yield R, Y_p
+
+def main():
+    args = argument_parser().parse_args()
+
+    #load the model
+    print('# Loading model:', args.model, file=sys.stderr)
+    model = src.model.load(args.model)
+
+    #load the data
+    print('# Loading data', file=sys.stderr)
+    cell_lines = get_cell_lines(args.dnase)
+    features = open_features(cell_lines, args.genome, args.dnase, args.rna_seq, args.gene_annot)
+
+    if args.regions is not None:
+        raise NotImplementedError()
+    else:
+        chroms = features.tracks['DNA'].chroms
+        regions = default_regions(chroms, cell_lines)
+    print('# Number of regions:', len(regions), file=sys.stderr)
+
+    dfs = []
+    for R, Y_p in predict(model, features, regions):
+        for i in range(len(R)):
+            cell_line, chrom, start, end = R[i]
+            n = (end-start)//50 - 3
+            y = Y_p[i,:n]
+            df = pd.DataFrame()
+            df['Predict'] = y
+            df.insert(0, 'Cell Line', cell_line)
+            df.insert(1, 'Chrom', chrom)
+            df.insert(2, 'Start', np.arange(start, start+50*n, 50))
+            df.insert(3, 'End', np.arange(end, end+50*n, 50))
+            dfs.append(df)
+    df = pd.concat(dfs, axis=0, ignore_index=True)
+    df.set_index(['Cell Line', 'Chrom', 'Start', 'End'], inplace=True)
+    df = df['Predict'].unstack(level=0)
+    
+    out = sys.stdout if args.output is None else open(args.output, 'w')
+    df.to_csv(out, sep='\t')
+    
+
+
+main()
+
+
+
+
+
+
+
+
+

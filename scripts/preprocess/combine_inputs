@@ -1,0 +1,74 @@
+#!/usr/bin/env python
+
+"""
+This scripts takes separate input files:
+    - FASTA formatted sequence
+    - BigWig tracks
+    - Gene expression levels
+and outputs a single, combined data file appropriate for downstream use
+"""
+
+import sys
+import os
+import argparse
+import gzip
+import pyBigWig
+#import cPickle as pickle
+import pickle
+import itertools
+#import pandas as pd
+
+sys.path.append('/'.join(os.path.dirname(os.path.abspath(__file__)).split('/')[:-2]))
+
+import src.data as data
+import src.parser as parse
+
+genome_path = 'data/raw/annotations/hg19.genome.fa.gz'
+gene_annotations_path = 'data/raw/annotations/gencode.v19.annotation.gff3.gz'
+dnase_dir = ''
+
+def argument_parser():
+    parser = argparse.ArgumentParser(description='This script combines genome, DNAse, and gene expression data files into one table suitable for downstream use.')
+    parser.add_argument('-g', '--genome', metavar='FILE', default=genome_path, help='genome file path (default: {})'.format(genome_path))
+    parser.add_argument('-d', '--dnase', metavar='FILE', help='DNAse file path')
+    parser.add_argument('-r', '--rna-seq', dest='rna_seq', metavar='FILE', nargs='*', help='Gene expression file path')
+    parser.add_argument('--gene-annot', dest='gene_annot', metavar='FILE', default=gene_annotations_path, help='Gene annotations file (default: {}'.format(gene_annotations_path))
+    parser.add_argument('-o', '--output', metavar='FILE', default=None, help='Destination file (default: stdout)')
+    return parser
+
+def read_gene_expression(path):
+    with open(path) as f:
+        for x in parse.read_gene_expression(f):
+            yield x
+
+def write_chrom_features(chrom, df, dest):
+    #write the df in chunks of size 1mil
+    chunk_size = 1000000
+    chunks = [df.iloc[i:i+chunk_size] for i in range(0,len(df),chunk_size)]
+    pickle.dump((chrom, chunks), dest, protocol=pickle.HIGHEST_PROTOCOL)
+
+def main():
+    args = argument_parser().parse_args()
+    expression_intervals = None
+    if len(args.rna_seq) > 0:
+        expr = [read_gene_expression(path) for path in args.rna_seq]
+        expr = data.combine_gene_expression(itertools.chain(*expr))         
+        with gzip.open(args.gene_annot) as gaf:
+            gene_annotations = parse.read_gene_annotations(gaf)
+            expression_intervals = data.gene_expression_intervals(expr, gene_annotations)
+    with gzip.open(args.genome) as gf: 
+        genome_fasta = parse.read_fasta(gf)
+        bw = pyBigWig.open(args.dnase)
+        out = sys.stdout.buffer if args.output is None else open(args.output, 'wb')
+        #out = '/dev/stdout' if args.output is None else args.output
+        #store = pd.HDFStore(out, 'w', complevel=9, complib='zlib')
+        for chrom, df in data.combine_inputs(genome_fasta, bw, expression_intervals):
+            #store.put(chrom, df, format='fixed')
+            #store[chrom] = df
+            #pickle.dump((chrom, df), out, protocol=pickle.HIGHEST_PROTOCOL)
+            write_chrom_features(chrom, df, out)
+        bw.close()
+
+main()
+
+

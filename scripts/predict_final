@@ -1,0 +1,54 @@
+#!/usr/bin/env python
+
+from __future__ import print_function
+
+import sys
+import os
+import argparse
+import pickle
+
+root_split = os.path.dirname(os.path.abspath(__file__)).split('/')[:-1]
+sys.path.append('/'.join(root_split))
+sys.path.append('/'.join(root_split+['rnn']))
+
+def argument_parser():
+    parser = argparse.ArgumentParser(description='This script takes a trained model and produces final round predictions')
+    parser.add_argument('-m', '--model', metavar='FILE', help='model file')
+    parser.add_argument('--TF', help='TF to generate predictions for')
+    parser.add_argument('--tracks', nargs='+', help='track features files')
+    parser.add_argument('--fixed', help='fixed features file')
+    parser.add_argument('-o', '--dest-dir', dest='destdir', metavar='DIR', help='destination directory root (default: model directory)')
+    parser.add_argument('--device', default='cpu', help='device to use. if lsf-queue is gpu this is set to gpu (default: cpu)')
+    parser.add_argument('--macrobatch-size', default=None, dest='macrobatch_size', help='size of macrobatches loaded from dataset (default: minibatch_size*8)')
+    return parser
+
+def main():
+    parser = argument_parser()
+    args = parser.parse_args()
+
+    outdir = args.destdir
+    if outdir is None:
+        outdir = os.path.dirname(args.model)
+
+    from src.progress import Progress
+    progress = Progress(out=sys.stderr)
+    ## initialize the device
+    if args.device is not None:
+        import src.config as cfg
+        print('[In Progress] initialize device: {}'.format(args.device), file=progress)
+        cfg.set_device(args.device)
+        print('[Done] initialize device: {}'.format(args.device), file=progress)
+    ## open the model file
+    print('[In Progress] Load model', file=progress)
+    with open(args.model, 'rb') as f:
+        model = pickle.load(f)
+    print('[Done] Load model', file=progress)
+    ## compute the final predictions
+    from src.scripts.predict_final import predict_final
+    predict_final(args.TF, model, args.tracks, args.fixed, outdir, progress=progress)
+
+if __name__ == '__main__':
+    main()
+
+
+

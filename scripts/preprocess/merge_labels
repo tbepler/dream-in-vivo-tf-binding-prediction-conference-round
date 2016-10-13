@@ -1,0 +1,54 @@
+#!/usr/bin/env python
+
+"""
+This script takes raw region labels (200 bp windows sliding by 50)
+and merges overlapping region, concatenating their labels for
+downstream usage.
+"""
+
+from __future__ import print_function
+
+import sys
+import os
+import argparse
+import gzip
+#import cPickle as pickle
+import pickle
+import pandas as pd
+
+sys.path.append('/'.join(os.path.dirname(os.path.abspath(__file__)).split('/')[:-2]))
+
+import src.data as data
+import src.parser as parse
+
+def argument_parser():
+    parser = argparse.ArgumentParser(description='This script merges raw region labels into contiguous regions with concatenated labels for downstream use.')
+    parser.add_argument('path', metavar='FILE', help='raw region label file to process')
+    parser.add_argument('-o', '--output', metavar='FILE', default=None, help='Destination file (default: stdout)')
+    return parser
+
+def main():
+    args = argument_parser().parse_args()
+    with gzip.open(args.path) as f:
+        cell_lines, iter_ = parse.read_labels(f)
+        rows = []
+        for chrom, start, end, values in data.merge_labels(iter_):
+            for (labels, masks), cell_line in zip(values, cell_lines):
+                row = [cell_line, chrom, start, end, labels, masks]
+                rows.append(row)
+        df = pd.DataFrame(rows, columns=['Cell Line', 'Chrom', 'Start', 'End', 'Label', 'Mask'])    
+        #print(df.head(), file=sys.stderr)
+    out = sys.stdout.buffer if args.output is None else open(args.output, 'wb')
+    pickle.dump(df, out, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+main()
+
+
+
+
+
+
+
+
+

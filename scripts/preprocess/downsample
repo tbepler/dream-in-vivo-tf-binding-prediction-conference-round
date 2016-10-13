@@ -1,0 +1,60 @@
+#!/usr/bin/env python
+
+"""
+This script takes a pickled data frame and downsamples the rows.
+"""
+
+from __future__ import print_function
+
+import sys
+import os
+import argparse
+import gzip
+#import cPickle as pickle
+import pickle
+import random
+import pandas as pd
+import numpy as np
+
+def argument_parser():
+    parser = argparse.ArgumentParser(description='This script takes a pickled data frame and downsamples the rows.')
+    parser.add_argument('path', metavar='FILE', help='pickled data frame file')
+    parser.add_argument('-n', '--number', metavar='INT', type=int, help='number of rows to keep')
+    parser.add_argument('-b', '--balance', action='store_true', help='balance the positive and negative examples')
+    parser.add_argument('-o', '--output', metavar='FILE', default=None, help='Destination file (default: stdout)')
+    return parser
+
+def main():
+    args = argument_parser().parse_args()
+    with gzip.open(args.path) as f:
+        df = pickle.load(f)
+    if args.balance:
+        labels = df.apply(lambda row: np.any(row['Label']==1), axis=1)
+        positive = df.loc[labels]
+        negative = df.loc[~labels]
+        n = positive['Cell Line'].value_counts()
+        n = (n.max() + n.min()) - n
+        dfs = []
+        for cell_line, group in negative.groupby('Cell Line'):
+            m = n[cell_line]
+            i = random.sample(range(len(group)), m)
+            dfs.append(group.iloc[i])
+        df_sampled = pd.concat(dfs+[positive], axis=0, ignore_index=True)
+    else:
+        i = random.sample(range(len(df)), args.number)
+        df_sampled = df.iloc[i]
+
+    out = sys.stdout.buffer if args.output is None else open(args.output, 'wb')
+    pickle.dump(df_sampled, out, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+main()
+
+
+
+
+
+
+
+
+

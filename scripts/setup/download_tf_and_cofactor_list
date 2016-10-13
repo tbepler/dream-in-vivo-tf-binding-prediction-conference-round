@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+cd data/raw/annotations
+wget --timestamping 'http://www.bioguo.org/AnimalTFDB/download/Homo_sapiens_TF_EnsemblID.txt'
+wget --timestamping 'http://www.bioguo.org/AnimalTFDB/download/Homo_sapiens_cofactor_EnsemblID.txt'
+#fix the line endings...
+sed -i 's/\r//' Homo_sapiens_TF_EnsemblID.txt
+sed -i 's/\r//' Homo_sapiens_cofactor_EnsemblID.txt

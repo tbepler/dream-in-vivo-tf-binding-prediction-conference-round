@@ -1,0 +1,72 @@
+#!/usr/bin/env python
+
+"""
+This script takes labeled regions and input data files and produces labeled
+inputs suitable for training models
+"""
+
+from __future__ import print_function
+
+import sys
+import os
+import argparse
+import gzip
+#import cPickle as pickle
+import pickle
+import pandas as pd
+
+sys.path.append('/'.join(os.path.dirname(os.path.abspath(__file__)).split('/')[:-2]))
+
+import src.data as data
+import src.parser as parse
+
+inputs_dir = 'data/processed/inputs'
+ 
+def argument_parser():
+    parser = argparse.ArgumentParser(description='This script takes labeled regions and input data files and produces labeled inputs suitable for training models.')
+    parser.add_argument('-y', '--labels', metavar='FILE', help='labeled regions file')
+    parser.add_argument('-x', '--inputs-dir', dest='inputs_dir', metavar='DIR', default=inputs_dir, help='directory in which to look for cell line input files (default: {})'.format(inputs_dir)) 
+    parser.add_argument('-o', '--output', metavar='FILE', default=None, help='Destination file (default: stdout)')
+    return parser
+
+def unpickle_iter(f):
+    while True:
+        try:
+            yield pickle.load(f)
+        except EOFError:
+            break
+
+def main():
+    args = argument_parser().parse_args()
+    with gzip.open(args.labels) as f:
+        labels_df = pickle.load(f)
+    cell_lines = set(labels_df['Cell Line'])
+    out = gzip.open('/dev/stdout', 'wb') if args.output is None else gzip.open(args.output, 'wb')
+    for cell_line in cell_lines:
+        cell_line_labels = labels_df.loc[labels_df['Cell Line']==cell_line]
+        input_path = '/'.join([args.inputs_dir, '.'.join([cell_line, 'combined.pi.gz'])])
+        with gzip.open(input_path) as f:
+            for chrom, input_df in unpickle_iter(f):
+                rows = []
+                chrom_labels = cell_line_labels.loc[cell_line_labels['Chrom']==chrom]
+                n = len(chrom_labels)
+                colnames = list(input_df.columns)
+                tracks = [input_df[name].values for name in colnames]
+                for _, _, _, start, end, labels, labels_mask in chrom_labels.itertuples():
+                    subtracks, track_mask = data.select_region(tracks, start, end)
+                    rows.append((cell_line, chrom, start, end, subtracks, track_mask, labels, labels_mask))
+                df = pd.DataFrame(rows, columns=['Cell Line', 'Chrom', 'Start', 'End'
+                                                , 'Tracks', 'Track Mask', 'Labels', 'Label Mask'])
+                pickle.dump(df, out, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+main()
+
+
+
+
+
+
+
+
+

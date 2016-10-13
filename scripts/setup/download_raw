@@ -1,0 +1,32 @@
+#!/usr/bin/env python
+
+from __future__ import print_function
+
+import synapseclient
+import getpass
+import tarfile
+import os
+
+syn = synapseclient.Synapse()
+username = input("Synapse username: ")
+pswd = getpass.getpass()
+syn.login(username, pswd)
+
+#synapse ids
+syn_ids = [ 'syn6403467' #chip-seq tar
+          , 'syn6403553' #DNASE tar
+          , 'syn6403556' #RNA-seq tar
+          , 'syn6403359' #annotations tar
+          ]
+
+#make directories as needed
+if not os.path.exists('data/raw/.cache'):
+    os.makedirs('data/raw/.cache')
+
+for sid in syn_ids:
+    cache = syn.get(sid, downloadLocation='data/raw/.cache') #download the file to cache
+    #extract the tar archive to the data/raw directory
+    tar = tarfile.open(cache.path)
+    print('Extracting', cache.path, 'to data/raw')
+    tar.extractall('data/raw')
+

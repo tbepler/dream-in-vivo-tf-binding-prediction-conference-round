@@ -1,0 +1,78 @@
+#!/usr/bin/env python
+
+"""
+This script takes a model file and training data and fits the model 
+"""
+
+from __future__ import print_function
+
+import sys
+import os
+import argparse
+
+root_split = os.path.dirname(os.path.abspath(__file__)).split('/')[:-1]
+sys.path.append('/'.join(root_split))
+sys.path.append('/'.join(root_split+['rnn']))
+
+def argument_parser():
+    parser = argparse.ArgumentParser(description='This script takes a model file, fits the model on the given TFs, and generates leaderboard and/or final predictions if specified')
+    parser.add_argument('-m', '--model', metavar='FILE', help='model file')
+    parser.add_argument('--TFs', metavar='LIST', default='all', help='comma separated list of TFs to fit (default: all)')
+    parser.add_argument('--predict', metavar='LIST', default='leaderboard,final', help='comma separated list of data sets to generate predictions for (default: leaderboard,final)')
+    parser.add_argument('-o', '--dest-dir', dest='destdir', metavar='DIR', default='predicts', help='destination directory root (default: predicts)')
+    parser.add_argument('-q', '--lsf-queue', dest='queue', metavar='QUEUE', default=None, help='LSF queue to submit tasks to (default: None)')
+    parser.add_argument('--device', default='cpu', help='device to use. if lsf-queue is gpu this is set to gpu (default: cpu)')
+    parser.add_argument('--dtype',  default=None, help='float data type to use (default: None)')
+    parser.add_argument('--macrobatch-size', default=None, dest='macrobatch_size', help='size of macrobatches loaded from dataset (default: minibatch_size*8)')
+    return parser
+
+def mcore_lsf(jobs, model_id):
+    from src.lsf import LSF    
+    pool = LSF()
+    pool.name = '.'.join(['fit', 'predict', model_id])
+    pool.queue = 'mcore'
+    pool.ncpus = '12'
+    pool.runlimit = '172:00'
+    pool.resources = ['mem=1500']
+    pool.setup = 'export OMP_NUM_THREADS=12'
+    for ident in pool.batch(jobs):
+        print(ident)
+
+def gpu_lsf(jobs, model_id):
+    from src.lsf import LSF    
+    pool = LSF()
+    pool.name = '.'.join(['fit', 'predict', model_id])
+    pool.queue = 'gpu'
+    pool.runlimit = '36:00'
+    pool.resources = ['mem=16000', 'ngpus=1']
+    for ident in pool.batch(jobs):
+        print(ident)
+
+def main():
+    parser = argument_parser()
+    args = parser.parse_args()
+    
+    from src.scripts.fit_production_model import fit_production_model
+    TFs = [TF.strip() for TF in args.TFs.split(',')]
+    predicts = [predict.strip() for predict in args.predict.split(',')]
+    device = args.device
+    if args.queue == 'gpu':
+        device = 'gpu'
+    tasks = fit_production_model(args.model, TFs, predicts, args.destdir, device, args.dtype, args.macrobatch_size)
+
+    model_id = args.model
+    if args.model.endswith('.py'):
+        model_id = os.path.basename(args.model)[:-3]
+    if args.queue == 'mcore':
+        mcore_lsf(tasks, model_id)
+    elif args.queue == 'gpu':
+        gpu_lsf(tasks, model_id)
+    else: ## otherwise just execute tasks serially here
+        for task in tasks:
+            task()
+
+if __name__ == '__main__':
+    main()
+
+
+

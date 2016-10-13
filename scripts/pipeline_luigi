@@ -1,0 +1,17 @@
+#!/usr/bin/env python
+
+import os
+import sys
+if __name__ == '__main__':
+    root_split = os.path.dirname(os.path.abspath(__file__)).split('/')[:-1]
+    sys.path.append('/'.join(root_split))
+    sys.path.append('/'.join(root_split+['rnn']))
+import luigi
+
+from src.pipeline.labels import MakeLabels
+from src.pipeline.tracks import CombineTracks
+
+if __name__ == '__main__':
+    luigi.run()
+
+

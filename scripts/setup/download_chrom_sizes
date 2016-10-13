@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+cd data/raw/annotations
+wget --timestamping 'http://hgdownload.cse.ucsc.edu/goldenpath/hg19/bigZips/hg19.chrom.sizes'

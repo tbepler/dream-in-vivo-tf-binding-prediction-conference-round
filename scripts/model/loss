@@ -1,0 +1,124 @@
+#!/usr/bin/env python
+
+"""
+This script takes a model file and training data and fits the model 
+"""
+
+from __future__ import print_function
+
+import sys
+import os
+import argparse
+import gzip
+#import cPickle as pickle
+import pickle
+import itertools
+import pandas as pd
+import numpy as np
+import six
+import random
+
+root_split = os.path.dirname(os.path.abspath(__file__)).split('/')[:-2]
+sys.path.append('/'.join(root_split))
+sys.path.append('/'.join(root_split+['rnn']))
+
+import src.data as data
+import src.parser as parse
+import src.loader as loader
+from src.progress import Progress
+import src.model
+
+def argument_parser():
+    parser = argparse.ArgumentParser(description='This script takes a model file and training data and fits the model.')
+    parser.add_argument('-m', '--model', metavar='FILE', help='model file')
+    parser.add_argument('-y', '--labels', metavar='FILE', help='labeled regions file')
+    parser.add_argument('-f', '--fixed', metavar='FILE', help='File containing fixed length features')
+    parser.add_argument('-t', '--tracks', metavar='FILE', nargs='*', help='Full feature track files')
+    parser.add_argument('-o', '--output', metavar='FILE', default=None, help='Destination file (default: stdout)')
+    return parser
+
+def find_file(paths, cell_line):
+    for path in paths:
+        if cell_line in path:
+            return path
+
+def find_files(paths, cell_line):
+    return [path for path in paths if cell_line in path]
+
+def read_gene_expression(path):
+    with open(path) as f:
+        for x in parse.read_gene_expression(f):
+            yield x
+
+def load_gene_expression_cell_lines(paths, cell_lines):
+    for cell_line in cell_lines:
+        print('# Loading', cell_line, 'gene expression', file=sys.stderr)
+        expr = [read_gene_expression(path) for path in find_files(paths, cell_line)]
+        expr = data.combine_gene_expression(itertools.chain(*expr))
+        yield cell_line, six.iteritems(expr)
+
+def get_regions(labels_df):
+    regions = []
+    for row in labels_df.itertuples():
+        regions.append(tuple(row[1:]))
+    return regions
+
+def open_fixed(fixed):
+    print('# Opening fixed features:', fixed, file=sys.stderr)
+    F = pd.read_csv(fixed, sep='\t', index_col=0)
+    F = F.astype(np.float32)
+    return F
+
+def open_features(regions, tracks, fixed, **kwargs):
+    from src.prefetcher import Prefetcher
+    it = loader.RegionsIterator(tracks, fixed, regions, **kwargs)    
+    #return it
+    return Prefetcher(it, 2048, thread=False)
+
+def open_validation_features(regions, tracks, fixed):
+    cell_lines = set(next(zip(*regions)))
+    tracks = {cell_line: find_file(tracks, cell_line) for cell_line in cell_lines}
+    print('# Using validation tracks:', list(tracks.values()), file=sys.stderr)
+    return open_features(regions, tracks, fixed)
+
+
+def main():
+    args = argument_parser().parse_args()
+
+    #load the model
+    print('# Loading model:', args.model, file=sys.stderr)
+    model = src.model.load(args.model)
+    sys.stderr.flush()
+
+    #load the regions
+    print('# Loading data', file=sys.stderr)
+    with gzip.open(args.labels) as f:
+        labels_df = pickle.load(f)
+    print('# Number of regions:', len(labels_df), file=sys.stderr)
+    sys.stderr.flush()
+    cell_lines = set(labels_df['Cell Line'])
+    regions = get_regions(labels_df)
+
+    #make the data loader
+    fixed = open_fixed(args.fixed)
+    data = open_validation_features(regions, args.tracks, fixed)
+
+    #calculate the loss
+    sys.stderr.flush()
+    progress = Progress(out=sys.stderr)
+    loss, df = model.loss(data, callback=progress.progress_monitor())
+
+    out = sys.stdout if args.output is None else open(args.output, 'w')
+    df.to_csv(out, sep='\t', float_format='%.5f', header=True, index=False)
+
+
+main()
+
+
+
+
+
+
+
+
+
