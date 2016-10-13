@@ -9,6 +9,7 @@ conda env create -f environment.yml -n tfbs-prediction
 source activate tfbs-prediction
 ```
 Install theano and other python packages not in anaconda
+pyBigWig requires libcurl, so make sure that's installed first
 ```
 pip install --no-deps git+git://github.com/Theano/Theano.git
 pip install pyBigWig synapseclient
@@ -38,4 +39,6 @@ To train the model and generate predictions for all TFs run
 ```
 scripts/fit_production_model -m models/resid_conv_crf_u64_l3_6_6_3_max_pool_no_rna_nbins64_stride32_minibatch64.py
 ```
+
+Predictions and trained models should now be in the predicts/ directory
 
