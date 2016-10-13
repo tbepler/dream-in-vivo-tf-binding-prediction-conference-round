@@ -16,7 +16,7 @@ pip install --no-deps git+git://github.com/Theano/Theano.git
 pip install pyBigWig synapseclient
 ```
 
-RECOMMENDED: add floatX=float32 to your .theanorc file
+recommended: add floatX=float32 to your .theanorc file
 
 #### Data setup and preprocessing
 Move the raw data into data/raw/\* or download the raw data from synapse using
