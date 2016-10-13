@@ -8,8 +8,9 @@ Set up the python environment. This will probably error near the end, but that s
 conda env create -f environment.yml -n tfbs-prediction
 source activate tfbs-prediction
 ```
-Install theano and other python packages not in anaconda
-pyBigWig requires libcurl, so make sure that's installed first
+Install theano and other python packages not in anaconda.
+
+pyBigWig requires libcurl so make sure that's installed first
 ```
 pip install --no-deps git+git://github.com/Theano/Theano.git
 pip install pyBigWig synapseclient
